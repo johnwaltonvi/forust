@@ -1,5 +1,5 @@
 use crate::data::{FloatData, JaggedMatrix, Matrix};
-use rayon::prelude::*;
+use crate::runtime::parallel;
 use serde::{Deserialize, Serialize};
 
 /// Struct to hold the information of a given bin.
@@ -146,33 +146,15 @@ impl HistogramMatrix {
             (n_grad, n_hess)
         };
 
-        let histograms = if parallel {
-            col_index
-                .par_iter()
-                .flat_map(|col| {
-                    create_feature_histogram(
-                        data.get_col(*col),
-                        cuts.get_col(*col),
-                        &sorted_grad,
-                        &sorted_hess,
-                        index,
-                    )
-                })
-                .collect::<Vec<Bin<f32>>>()
-        } else {
-            col_index
-                .iter()
-                .flat_map(|col| {
-                    create_feature_histogram(
-                        data.get_col(*col),
-                        cuts.get_col(*col),
-                        &sorted_grad,
-                        &sorted_hess,
-                        index,
-                    )
-                })
-                .collect::<Vec<Bin<f32>>>()
-        };
+        let histograms = parallel::flat_map_collect(parallel, col_index, |col| {
+            create_feature_histogram(
+                data.get_col(*col),
+                cuts.get_col(*col),
+                &sorted_grad,
+                &sorted_hess,
+                index,
+            )
+        });
 
         // If we have sampled down the columns, we need to recalculate the ends.
         // we can do this by iterating over the cut's, as this will be the size

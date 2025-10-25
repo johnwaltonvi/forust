@@ -4,11 +4,11 @@ use crate::grower::Grower;
 use crate::histogram::HistogramMatrix;
 use crate::node::{Node, SplittableNode};
 use crate::partial_dependence::tree_partial_dependence;
+use crate::runtime::parallel;
 use crate::sampler::SampleMethod;
 use crate::splitter::Splitter;
 use crate::utils::fast_f64_sum;
 use crate::utils::{gain, odds, weight};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fmt::{self, Display};
@@ -338,12 +338,15 @@ impl Tree {
         missing: &f64,
     ) {
         // There needs to always be at least 2 trees
-        data.index
-            .par_iter()
-            .zip(contribs.par_chunks_mut(data.cols + 1))
-            .for_each(|(row, contribs)| {
-                self.predict_contributions_row_weight(&data.get_row(*row), contribs, missing)
-            })
+        parallel::for_each_index_chunk(
+            true,
+            &data.index,
+            contribs,
+            data.cols + 1,
+            |row, chunk| {
+                self.predict_contributions_row_weight(&data.get_row(row), chunk, missing)
+            },
+        )
     }
 
     /// This is the method that XGBoost uses.
@@ -380,17 +383,20 @@ impl Tree {
         missing: &f64,
     ) {
         // There needs to always be at least 2 trees
-        data.index
-            .par_iter()
-            .zip(contribs.par_chunks_mut(data.cols + 1))
-            .for_each(|(row, contribs)| {
+        parallel::for_each_index_chunk(
+            true,
+            &data.index,
+            contribs,
+            data.cols + 1,
+            |row, chunk| {
                 self.predict_contributions_row_average(
-                    &data.get_row(*row),
-                    contribs,
+                    &data.get_row(row),
+                    chunk,
                     weights,
                     missing,
                 )
-            })
+            },
+        )
     }
 
     fn predict_leaf(&self, data: &Matrix<f64>, row: usize, missing: &f64) -> &Node {
@@ -425,10 +431,9 @@ impl Tree {
     }
 
     fn predict_parallel(&self, data: &Matrix<f64>, missing: &f64) -> Vec<f64> {
-        data.index
-            .par_iter()
-            .map(|i| self.predict_leaf(data, *i, missing).weight_value as f64)
-            .collect()
+        parallel::map_collect(true, &data.index, |i| {
+            self.predict_leaf(data, *i, missing).weight_value as f64
+        })
     }
 
     pub fn predict(&self, data: &Matrix<f64>, parallel: bool, missing: &f64) -> Vec<f64> {
@@ -440,10 +445,9 @@ impl Tree {
     }
 
     pub fn predict_leaf_indices(&self, data: &Matrix<f64>, missing: &f64) -> Vec<usize> {
-        data.index
-            .par_iter()
-            .map(|i| self.predict_leaf(data, *i, missing).num)
-            .collect()
+        parallel::map_collect(true, &data.index, |i| {
+            self.predict_leaf(data, *i, missing).num
+        })
     }
 
     pub fn value_partial_dependence(&self, feature: usize, value: f64, missing: &f64) -> f64 {

@@ -11,6 +11,7 @@ use crate::sampler::{GossSampler, RandomSampler, SampleMethod, Sampler};
 use crate::shapley::predict_contributions_row_shapley;
 use crate::splitter::{MissingBranchSplitter, MissingImputerSplitter, Splitter};
 use crate::tree::Tree;
+use crate::runtime::parallel;
 use crate::utils::{
     fmt_vec_output, odds, validate_not_nan_vec, validate_positive_float_field,
     validate_positive_not_nan_vec,
@@ -19,9 +20,9 @@ use log::info;
 use rand::rngs::StdRng;
 use rand::seq::IteratorRandom;
 use rand::SeedableRng;
-use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 
 pub type EvaluationData<'a> = (Matrix<'a, f64>, &'a [f64], &'a [f64]);
@@ -806,27 +807,18 @@ impl GradientBooster {
         // materializing a row, and then passing that to all of the
         // trees seems to be the fastest approach (5X faster), we should test
         // something like this for normal predictions.
-        if parallel {
-            data.index
-                .par_iter()
-                .zip(contribs.par_chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees().iter().for_each(|t| {
-                        row_pred_fn(t, &r_, c, &self.missing);
-                    });
+        parallel::for_each_index_chunk(
+            parallel,
+            &data.index,
+            contribs.as_mut_slice(),
+            data.cols + 1,
+            |row, chunk| {
+                let r_ = data.get_row(row);
+                self.get_prediction_trees().iter().for_each(|t| {
+                    row_pred_fn(t, &r_, chunk, &self.missing);
                 });
-        } else {
-            data.index
-                .iter()
-                .zip(contribs.chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees().iter().for_each(|t| {
-                        row_pred_fn(t, &r_, c, &self.missing);
-                    });
-                });
-        }
+            },
+        );
 
         contribs
     }
@@ -843,17 +835,11 @@ impl GradientBooster {
     ///
     /// * `data` -  Either a pandas DataFrame, or a 2 dimensional numpy array.
     fn predict_contributions_average(&self, data: &Matrix<f64>, parallel: bool) -> Vec<f64> {
-        let weights: Vec<Vec<f64>> = if parallel {
-            self.get_prediction_trees()
-                .par_iter()
-                .map(|t| t.distribute_leaf_weights())
-                .collect()
-        } else {
-            self.get_prediction_trees()
-                .iter()
-                .map(|t| t.distribute_leaf_weights())
-                .collect()
-        };
+        let weights: Vec<Vec<f64>> = parallel::map_collect(
+            parallel,
+            self.get_prediction_trees(),
+            |t| t.distribute_leaf_weights(),
+        );
         let mut contribs = vec![0.; (data.cols + 1) * data.rows];
 
         // Add the bias term to every bias value...
@@ -868,33 +854,21 @@ impl GradientBooster {
         // materializing a row, and then passing that to all of the
         // trees seems to be the fastest approach (5X faster), we should test
         // something like this for normal predictions.
-        if parallel {
-            data.index
-                .par_iter()
-                .zip(contribs.par_chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees()
-                        .iter()
-                        .zip(weights.iter())
-                        .for_each(|(t, w)| {
-                            t.predict_contributions_row_average(&r_, c, w, &self.missing);
-                        });
-                });
-        } else {
-            data.index
-                .iter()
-                .zip(contribs.chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees()
-                        .iter()
-                        .zip(weights.iter())
-                        .for_each(|(t, w)| {
-                            t.predict_contributions_row_average(&r_, c, w, &self.missing);
-                        });
-                });
-        }
+        parallel::for_each_index_chunk(
+            parallel,
+            &data.index,
+            contribs.as_mut_slice(),
+            data.cols + 1,
+            |row, chunk| {
+                let r_ = data.get_row(row);
+                self.get_prediction_trees()
+                    .iter()
+                    .zip(weights.iter())
+                    .for_each(|(t, w)| {
+                        t.predict_contributions_row_average(&r_, chunk, w, &self.missing);
+                    });
+            },
+        );
 
         contribs
     }
@@ -912,41 +886,25 @@ impl GradientBooster {
             .step_by(bias_idx)
             .for_each(|v| *v += odds(self.base_score));
 
-        if parallel {
-            data.index
-                .par_iter()
-                .zip(contribs.par_chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees()
-                        .iter()
-                        .fold(self.base_score, |acc, t| {
-                            t.predict_contributions_row_probability_change(
-                                &r_,
-                                c,
-                                &self.missing,
-                                acc,
-                            )
-                        });
-                });
-        } else {
-            data.index
-                .iter()
-                .zip(contribs.chunks_mut(data.cols + 1))
-                .for_each(|(row, c)| {
-                    let r_ = data.get_row(*row);
-                    self.get_prediction_trees()
-                        .iter()
-                        .fold(self.base_score, |acc, t| {
-                            t.predict_contributions_row_probability_change(
-                                &r_,
-                                c,
-                                &self.missing,
-                                acc,
-                            )
-                        });
-                });
-        }
+        parallel::for_each_index_chunk(
+            parallel,
+            &data.index,
+            contribs.as_mut_slice(),
+            data.cols + 1,
+            |row, chunk| {
+                let r_ = data.get_row(row);
+                self.get_prediction_trees()
+                    .iter()
+                    .fold(self.base_score, |acc, t| {
+                        t.predict_contributions_row_probability_change(
+                            &r_,
+                            chunk,
+                            &self.missing,
+                            acc,
+                        )
+                    });
+            },
+        );
         contribs
     }
 
@@ -956,17 +914,13 @@ impl GradientBooster {
     /// * `feature` - The index of the feature.
     /// * `value` - The value for which to calculate the partial dependence.
     pub fn value_partial_dependence(&self, feature: usize, value: f64) -> f64 {
-        let pd: f64 = if self.parallel {
-            self.get_prediction_trees()
-                .par_iter()
-                .map(|t| t.value_partial_dependence(feature, value, &self.missing))
-                .sum()
-        } else {
-            self.get_prediction_trees()
-                .iter()
-                .map(|t| t.value_partial_dependence(feature, value, &self.missing))
-                .sum()
-        };
+        let pd: f64 = parallel::map_collect(
+            self.parallel,
+            self.get_prediction_trees(),
+            |t| t.value_partial_dependence(feature, value, &self.missing),
+        )
+        .into_iter()
+        .sum();
         pd + self.base_score
     }
 
@@ -1019,6 +973,7 @@ impl GradientBooster {
     /// Save a booster as a json object to a file.
     ///
     /// * `path` - Path to save booster.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_booster(&self, path: &str) -> Result<(), ForustError> {
         let model = self.json_dump()?;
         match fs::write(path, model) {
@@ -1049,6 +1004,7 @@ impl GradientBooster {
     /// Load a booster from a path to a json booster object.
     ///
     /// * `path` - Path to load booster from.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_booster(path: &str) -> Result<Self, ForustError> {
         let json_str = match fs::read_to_string(path) {
             Ok(s) => Ok(s),

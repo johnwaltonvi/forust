@@ -2,6 +2,7 @@ mod histogram;
 mod node;
 mod partial_dependence;
 mod shapley;
+mod runtime;
 
 // Modules
 pub mod binning;
