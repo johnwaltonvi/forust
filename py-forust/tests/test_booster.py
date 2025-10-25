@@ -877,12 +877,6 @@ def unpickle_booster(path: str) -> GradientBooster:
         return pickle.load(file)
 
 
-def save_booster(model: GradientBooster, path: str) -> None:
-    model.save_booster(path)
-
-
-def load_booster(path: str) -> GradientBooster:
-    return GradientBooster.load_booster(path)
 
 
 def test_monotone_constraints(X_y):
@@ -1687,7 +1681,7 @@ def test_leaf_preds(X_y):
 # All save and load methods
 @pytest.mark.parametrize(
     "load_func,save_func",
-    [(unpickle_booster, pickle_booster), (load_booster, save_booster)],
+    [(unpickle_booster, pickle_booster)],
 )
 class TestSaveLoadFunctions:
     def test_early_stopping_rounds(

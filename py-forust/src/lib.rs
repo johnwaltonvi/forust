@@ -309,13 +309,6 @@ impl GradientBooster {
         Ok(trees)
     }
 
-    pub fn save_booster(&self, path: &str) -> PyResult<()> {
-        match self.booster.save_booster(path) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(PyValueError::new_err(e.to_string())),
-        }
-    }
-
     pub fn json_dump(&self) -> PyResult<String> {
         match self.booster.json_dump() {
             Ok(m) => Ok(m),
@@ -336,15 +329,6 @@ impl GradientBooster {
                 key
             ))),
         }
-    }
-
-    #[classmethod]
-    pub fn load_booster(_: &PyType, path: String) -> PyResult<Self> {
-        let booster = match CrateGradientBooster::load_booster(path.as_str()) {
-            Ok(m) => Ok(m),
-            Err(e) => Err(PyValueError::new_err(e.to_string())),
-        }?;
-        Ok(GradientBooster { booster })
     }
 
     #[classmethod]

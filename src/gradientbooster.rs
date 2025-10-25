@@ -22,8 +22,6 @@ use rand::seq::IteratorRandom;
 use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
 
 pub type EvaluationData<'a> = (Matrix<'a, f64>, &'a [f64], &'a [f64]);
 pub type TrainingEvaluationData<'a> = (&'a Matrix<'a, f64>, &'a [f64], &'a [f64], Vec<f64>);
@@ -970,18 +968,6 @@ impl GradientBooster {
         }
     }
 
-    /// Save a booster as a json object to a file.
-    ///
-    /// * `path` - Path to save booster.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_booster(&self, path: &str) -> Result<(), ForustError> {
-        let model = self.json_dump()?;
-        match fs::write(path, model) {
-            Err(e) => Err(ForustError::UnableToWrite(e.to_string())),
-            Ok(_) => Ok(()),
-        }
-    }
-
     /// Dump a booster as a json object
     pub fn json_dump(&self) -> Result<String, ForustError> {
         match serde_json::to_string(self) {
@@ -1001,17 +987,6 @@ impl GradientBooster {
         }
     }
 
-    /// Load a booster from a path to a json booster object.
-    ///
-    /// * `path` - Path to load booster from.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_booster(path: &str) -> Result<Self, ForustError> {
-        let json_str = match fs::read_to_string(path) {
-            Ok(s) => Ok(s),
-            Err(e) => Err(ForustError::UnableToRead(e.to_string())),
-        }?;
-        Self::from_json(&json_str)
-    }
 
     // Set methods for paramters
     /// Set the objective_type on the booster.
@@ -1319,41 +1294,5 @@ mod tests {
         println!("{}", booster.trees[0].nodes.len());
         println!("{}", booster.trees.last().unwrap().nodes.len());
         println!("{:?}", &preds[0..10]);
-    }
-
-    #[test]
-    fn test_tree_save() {
-        let file = fs::read_to_string("resources/contiguous_with_missing.csv")
-            .expect("Something went wrong reading the file");
-        let data_vec: Vec<f64> = file
-            .lines()
-            .map(|x| x.parse::<f64>().unwrap_or(f64::NAN))
-            .collect();
-        let file = fs::read_to_string("resources/performance.csv")
-            .expect("Something went wrong reading the file");
-        let y: Vec<f64> = file.lines().map(|x| x.parse::<f64>().unwrap()).collect();
-
-        let data = Matrix::new(&data_vec, 891, 5);
-        //let data = Matrix::new(data.get_col(1), 891, 1);
-        let mut booster = GradientBooster::default()
-            .set_iterations(10)
-            .set_nbins(300)
-            .set_max_depth(3)
-            .set_base_score(0.5)
-            .set_initialize_base_score(false);
-        let sample_weight = vec![1.; y.len()];
-        booster.fit(&data, &y, &sample_weight, None).unwrap();
-        let preds = booster.predict(&data, true);
-
-        booster.save_booster("resources/model64.json").unwrap();
-        let booster2 = GradientBooster::load_booster("resources/model64.json").unwrap();
-        assert_eq!(booster2.predict(&data, true)[0..10], preds[0..10]);
-
-        // Test with non-NAN missing.
-        booster.missing = 0.;
-        booster.save_booster("resources/modelmissing.json").unwrap();
-        let booster3 = GradientBooster::load_booster("resources/modelmissing.json").unwrap();
-        assert_eq!(booster3.missing, 0.);
-        assert_eq!(booster3.missing, booster.missing);
     }
 }

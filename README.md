@@ -148,13 +148,3 @@ model.calculate_feature_importance("Gain")
 #   'pclass': 0.5208225250244141
 # }
 ```
-
-### Saving the model
-To save and subsequently load a trained booster, the `save_booster` and `load_booster` methods can be used. Each accepts a path, which is used to write the model to. The model is saved and loaded as a json object.
-
-```python
-trained_model.save_booster("model_path.json")
-
-# To load a model from a json path.
-loaded_model = GradientBooster.load_booster("model_path.json")
-```

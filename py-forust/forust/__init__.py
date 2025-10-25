@@ -219,13 +219,6 @@ class BoosterType(Protocol):
         """pass"""
 
     @classmethod
-    def load_booster(cls, path: str) -> BoosterType:
-        """pass"""
-
-    def save_booster(self, path: str):
-        """pass"""
-
-    @classmethod
     def from_json(cls, json_str: str) -> BoosterType:
         """pass"""
 
@@ -946,48 +939,7 @@ class GradientBooster:
         """
         return self.booster.json_dump()
 
-    @classmethod
-    def load_booster(cls, path: str) -> GradientBooster:
-        """Load a booster object that was saved with the `save_booster` method.
 
-        Args:
-            path (str): Path to the saved booster file.
-
-        Returns:
-            GradientBooster: An initialized booster object.
-        """
-        booster = CrateGradientBooster.load_booster(str(path))
-
-        params = booster.get_params()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            c = cls(**params)
-        c.booster = booster
-        for m in c.meta_data_attributes:
-            try:
-                m_ = c._get_metadata_attributes(m)
-                setattr(c, m, m_)
-                # If "feature_names_in_" is present, we know a
-                # pandas dataframe was used for fitting, in this case
-                # get back the original monotonicity map, with the
-                # feature names as keys.
-                if m == "feature_names_in_":
-                    if c.monotone_constraints is not None:
-                        c.monotone_constraints = {
-                            ft: c.monotone_constraints[i]
-                            for i, ft in enumerate(c.feature_names_in_)
-                        }
-            except KeyError:
-                pass
-        return c
-
-    def save_booster(self, path: str):
-        """Save a booster object, the underlying representation is a json file.
-
-        Args:
-            path (str): Path to save the booster object.
-        """
-        self.booster.save_booster(str(path))
 
     def _standardize_monotonicity_map(
         self,
